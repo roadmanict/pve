@@ -56,15 +56,17 @@ AUTH_KEYS="$SSH_DIR/authorized_keys"
 
 # Ensure the .ssh directory exists with correct permissions
 if [[ ! -d "${SSH_DIR}" ]]; then
-    echo "Creating ${SSH_DIR} ..."
+    log "Creating ${SSH_DIR} ..."
     mkdir -p "${SSH_DIR}"
     chmod 700 "${SSH_DIR}"
     chown "${USERNAME}:${USERNAME}" "${SSH_DIR}"
 else
-    echo "${SSH_DIR} already exists – fixing permissions just in case."
+    log "${SSH_DIR} already exists – fixing permissions just in case."
     chmod 700 "${SSH_DIR}"
     chown "${USERNAME}:${USERNAME}" "${SSH_DIR}"
 fi
+
+log "Reading keys"
 
 # Define the keys you want present (one per line)
 read -r -d '' REQUIRED_KEYS <<'EOF'
