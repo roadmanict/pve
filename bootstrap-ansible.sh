@@ -1,28 +1,113 @@
-#/bin/bash
-set -e
-apt update
-apt full-upgrade --yes
+#!/usr/bin/env bash
+# ------------------------------------------------------------
+# Idempotent provisioning script for an "ansible" user
+# ------------------------------------------------------------
+# Exit on error, treat unset variables as errors, and fail on pipe errors
+set -euo pipefail
 
-apt install sudo --yes
+# ------------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------------
+log()   { printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$*"; }
+die()   { log "ERROR: $*" >&2; exit 1; }
 
-# Create new user
-useradd -m -s /bin/bash ansible || echo "User already exists"
+# ------------------------------------------------------------------
+# 1. Update the package index and upgrade the system (once per run)
+# ------------------------------------------------------------------
+log "Updating package index ..."
+apt-get update -qq
 
-usermod -a -G sudo ansible
+log "Performing full upgrade ..."
+apt-get full-upgrade -y -qq
 
-mkdir /home/ansible/.ssh || echo "Directory exists"
-rm -f /home/ansible/.ssh/authorized_keys
-touch /home/ansible/.ssh/authorized_keys
+# ------------------------------------------------------------------
+# 2. Ensure sudo is installed
+# ------------------------------------------------------------------
+if ! dpkg -s sudo >/dev/null 2>&1; then
+    log "Installing sudo ..."
+    apt-get install -y sudo
+else
+    log "sudo already installed"
+fi
 
-echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDhjvmvRyaBojmOPhVS2EfmQLBllYVL8bhMRihxGOYqp lxc@debian" >> /home/ansible/.ssh/authorized_keys
-echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJYOk8j2fsAzz+TgYKJOvZtE+ncsj3U/XtQ4d37ql7r0 j.moes01@gmail.com" >> /home/ansible/.ssh/authorized_keys
+# ------------------------------------------------------------------
+# 3. Create the ansible user (if it does not already exist)
+# ------------------------------------------------------------------
+USERNAME="ansible"
+if id -u "$USERNAME" >/dev/null 2>&1; then
+    log "User '$USERNAME' already exists"
+else
+    log "Creating user '$USERNAME' ..."
+    useradd -m -s /bin/bash "$USERNAME"
+    # Add to sudo group
+    usermod -aG sudo "$USERNAME"
+fi
 
-chmod 700 /home/ansible/.ssh
-chmod 600 /home/ansible/.ssh/authorized_keys
+# ------------------------------------------------------------------
+# 4. Set up the .ssh directory and authorized_keys (idempotent)
+# ------------------------------------------------------------------
+SSH_DIR="/home/$USERNAME/.ssh"
+AUTH_KEYS="$SSH_DIR/authorized_keys"
 
-chown -R ansible:ansible /home/ansible/.ssh
+# Ensure the .ssh directory exists with correct permissions
+if [[ ! -d "$SSH_DIR" ]]; then
+    log "Creating $SSH_DIR ..."
+    mkdir -p "$SSH_DIR"
+    chmod 700 "$SSH_DIR"
+    chown "$USERNAME:$USERNAME" "$SSH_DIR"
+else
+    log "$SSH_DIR already exists"
+fi
 
-echo "ansible ALL=(ALL:ALL) NOPASSWD:ALL" >> /etc/sudoers.d/ansible
-chmod -R 0440 /etc/sudoers.d/
+# Define the keys you want present (one per line)
+read -r -d '' REQUIRED_KEYS <<'EOF'
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDhjvmvRyaBojmOPhVS2EfmQLBllYVL8bhMRihxGOYqp lxc@debian
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJYOk8j2fsAzz+TgYKJOvZtE+ncsj3U/XtQ4d37ql7r0 j.moes01@gmail.com
+EOF
 
-visudo -c
+# Ensure each required key is present exactly once
+touch "$AUTH_KEYS"
+chmod 600 "$AUTH_KEYS"
+chown "$USERNAME:$USERNAME" "$AUTH_KEYS"
+
+while IFS= read -r key; do
+    # Skip empty lines
+    [[ -z "$key" ]] && continue
+    # Grep -Fxq matches the whole line exactly
+    if grep -Fxq "$key" "$AUTH_KEYS"; then
+        log "Key already present: $(echo "$key" | awk '{print $2}')"
+    else
+        log "Adding missing key ..."
+        printf '%s\n' "$key" >>"$AUTH_KEYS"
+    fi
+done <<<"$REQUIRED_KEYS"
+
+# ------------------------------------------------------------------
+# 5. Configure password‑less sudo for the ansible user
+# ------------------------------------------------------------------
+SUDOERS_FILE="/etc/sudoers.d/ansible"
+SUDOERS_LINE="ansible ALL=(ALL:ALL) NOPASSWD:ALL"
+
+if [[ -f "$SUDOERS_FILE" ]]; then
+    if grep -Fxq "$SUDOERS_LINE" "$SUDOERS_FILE"; then
+        log "Sudoers entry already present"
+    else
+        log "Updating existing sudoers file"
+        echo "$SUDOERS_LINE" >>"$SUDOERS_FILE"
+    fi
+else
+    log "Creating sudoers file for $USERNAME"
+    echo "$SUDOERS_LINE" >"$SUDOERS_FILE"
+fi
+
+# Secure the sudoers fragment (read‑only for root)
+chmod 0440 "$SUDOERS_FILE"
+
+# Validate the sudoers configuration before exiting
+if visudo -c; then
+    log "Sudoers syntax OK"
+else
+    die "Invalid sudoers configuration – aborting"
+fi
+
+log "Provisioning completed successfully"
