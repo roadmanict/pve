@@ -5,6 +5,11 @@
 # Exit on error, treat unset variables as errors, and fail on pipe errors
 set -euo pipefail
 
+if [[ "$(id -u)" -ne 0 ]]; then
+    echo "⚠️  This script must be run as root (use sudo)." >&2
+    exit 1
+fi
+
 # ------------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------------
@@ -66,10 +71,12 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJYOk8j2fsAzz+TgYKJOvZtE+ncsj3U/XtQ4d37ql7r0
 EOF
 
 # Ensure each required key is present exactly once
+log "Creating $AUTH_KEYS ..."
 touch "$AUTH_KEYS"
 chmod 600 "$AUTH_KEYS"
 chown "$USERNAME:$USERNAME" "$AUTH_KEYS"
 
+log "Inserting keys ..."
 while IFS= read -r key; do
     # Skip empty lines
     [[ -z "$key" ]] && continue
