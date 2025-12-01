@@ -69,10 +69,11 @@ fi
 log "Reading keys"
 
 # Define the keys you want present (one per line)
-read -r -d '' REQUIRED_KEYS <<'EOF'
+REQUIRED_KEYS=$(cat <<'EOF'
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDhjvmvRyaBojmOPhVS2EfmQLBllYVL8bhMRihxGOYqp lxc@debian
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJYOk8j2fsAzz+TgYKJOvZtE+ncsj3U/XtQ4d37ql7r0 j.moes01@gmail.com
 EOF
+)
 
 # Ensure each required key is present exactly once
 log "Creating $AUTH_KEYS ..."
